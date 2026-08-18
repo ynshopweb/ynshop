@@ -1,17 +1,31 @@
 // =========================================================================
 // Stock Management State
-// Berisi state & logika penyesuaian stok (masuk/keluar) beserta riwayat
-// (stockLogs). Data awal stockLogs sama seperti index.html asli.
+// -------------------------------------------------------------------------
+// TAHAP INTEGRASI: field `stock` yang diubah di sini adalah field
+// `stock` YANG SAMA dipakai YN Shop (bukan stok terpisah). Penyesuaian
+// memakai Firestore transaction (runTransaction) supaya aman jika ada
+// pembeli online yang checkout bersamaan pada produk yang sama — stok
+// dibaca ulang di dalam transaksi, bukan dari cache state.products yang
+// mungkin sudah usang.
+//
+// Riwayat stok (stockLogs) adalah koleksi EKSTENSI milik POS (tidak ada
+// di skema YN Shop) — disimpan di artifacts/{appId}/stockLogs supaya
+// tetap dalam satu project Firebase yang sama, tanpa memengaruhi data
+// YN Shop.
 // =========================================================================
 function createStockState() {
     return {
         stockModalOpen: false,
         stockForm: { productId: '', type: 'IN', qty: 1, note: '' },
 
-        // Riwayat Stok (data awal, sama seperti index.html asli)
-        stockLogs: [
-            { id: '1', date: '2026-07-28 09:00', productName: 'Minyak Goreng 1L', type: 'IN', qty: 20, note: 'Stok Awal' }
-        ],
+        stockLogs: [],
+
+        _subscribeStockLogs() {
+            if (!window.posDb?.db) return;
+            window.posDb.subscribeStockLogs((data) => {
+                this.stockLogs = (data || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            });
+        },
 
         openStockAdjustModal() {
             this.stockForm = { productId: '', type: 'IN', qty: 1, note: '' };
@@ -19,29 +33,53 @@ function createStockState() {
         },
 
         async saveStockAdjust() {
-            const product = this.products.find(p => p.id === this.stockForm.productId);
-            if (!product) return;
+            const productId = this.stockForm.productId;
+            const type = this.stockForm.type;
+            const qty = Math.max(1, Number(this.stockForm.qty) || 1);
+            const note = this.stockForm.note || 'Penyesuaian Manual';
 
-            const change = this.stockForm.type === 'IN' ? this.stockForm.qty : -this.stockForm.qty;
-            const newStock = Math.max(0, product.stock + change);
+            const productRef = window.posDb.productDocRef(productId);
+            let productName = '';
+            let finalStock = 0;
 
-            product.stock = newStock;
-            if (window.posDb?.db) {
-                await window.posDb.saveDoc('products', product.id, product);
+            try {
+                await window.posDb.runStockTransaction(async (transaction) => {
+                    const snap = await transaction.get(productRef);
+                    if (!snap.exists()) throw new Error('Produk tidak ditemukan di database.');
 
-                const logId = String(Date.now());
-                await window.posDb.saveDoc('stockLogs', logId, {
-                    id: logId,
-                    date: new Date().toLocaleString('id-ID'),
-                    productName: product.name,
-                    type: this.stockForm.type,
-                    qty: this.stockForm.qty,
-                    note: this.stockForm.note || 'Penyesuaian Manual'
+                    const data = snap.data();
+                    productName = data.name;
+                    const currentStock = (typeof data.stock === 'number') ? data.stock : 0;
+                    const change = type === 'IN' ? qty : -qty;
+                    const newStock = currentStock + change;
+
+                    if (newStock < 0) {
+                        throw new Error(`Stok tidak mencukupi untuk dikurangi (sisa saat ini: ${currentStock}).`);
+                    }
+
+                    finalStock = newStock;
+                    transaction.update(productRef, { stock: newStock });
                 });
-            }
 
-            this.stockModalOpen = false;
-            this.showToast('Penyesuaian stok tersimpan', 'success');
+                const now = Date.now();
+                await window.posDb.addStockLog({
+                    productId,
+                    productName,
+                    type,
+                    qty,
+                    note,
+                    resultingStock: finalStock,
+                    cashierId: this.currentUser.uid,
+                    cashierName: this.currentUser.name,
+                    date: new Date(now).toLocaleString('id-ID'),
+                    createdAt: now
+                });
+
+                this.stockModalOpen = false;
+                this.showToast('Penyesuaian stok tersimpan', 'success');
+            } catch (err) {
+                this.showToast('Gagal menyesuaikan stok: ' + err.message, 'error');
+            }
         }
     };
 }
