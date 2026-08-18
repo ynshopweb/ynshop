@@ -1,0 +1,12 @@
+/* =========================================================================
+   YN SHOP POS - Custom Stylesheet
+   Dipindahkan dari <style> block index.html asli (tanpa perubahan isi)
+   ========================================================================= */
+
+[x-cloak] { display: none !important; }
+
+@media print {
+    body * { visibility: hidden; }
+    #receipt-print-area, #receipt-print-area * { visibility: visible; }
+    #receipt-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+}
