@@ -37,9 +37,19 @@ document.addEventListener('alpine:init', () => {
             async init() {
                 this.$nextTick(() => this.renderChart());
 
-                if (!window.posDb) {
+                // --- Tunggu window.posDb siap (BUKAN langsung menyerah) ---
+                // js/firebase-service.js dimuat sebagai ES module dan masih
+                // harus mengambil beberapa file SDK Firebase dari gstatic.com
+                // sebelum window.posDb terbentuk. Alpine bisa saja selesai
+                // init() LEBIH DULU daripada proses itu selesai (race
+                // condition), jadi di sini kita tunggu (polling ringan)
+                // sampai window.posDb benar-benar ada, dengan batas waktu
+                // wajar, sebelum menyerah dan menampilkan pesan error.
+                const posDbReady = await this._waitForPosDb(10000);
+
+                if (!posDbReady) {
                     this.dbConnected = false;
-                    this.loginError = 'Konfigurasi Firebase tidak ditemukan.';
+                    this.loginError = 'Gagal memuat koneksi Firebase. Periksa koneksi internet Anda, lalu muat ulang halaman.';
                     this.authReady = true;
                     return;
                 }
@@ -57,8 +67,13 @@ document.addEventListener('alpine:init', () => {
                         const profile = await window.posDb.getUserProfile(user.uid);
 
                         if (!profile || profile.status === 'disabled' || (profile.role !== 'admin' && profile.role !== 'kasir')) {
-                            // Sesi tidak sah untuk akses POS -> paksa logout, JANGAN
-                            // fallback ke anonymous atau data dummy apa pun.
+                            // Sesi tidak sah untuk akses POS -> paksa logout + beri tahu
+                            // alasannya, JANGAN fallback ke anonymous/data dummy apa pun.
+                            this.loginError = !profile
+                                ? 'Profil pengguna tidak ditemukan di database YN Shop. Hubungi admin.'
+                                : profile.status === 'disabled'
+                                    ? 'Akun ini telah dinonaktifkan oleh admin.'
+                                    : 'Akun ini tidak memiliki akses ke sistem kasir (role bukan admin/kasir).';
                             await window.posDb.logout();
                             return;
                         }
@@ -90,6 +105,23 @@ document.addEventListener('alpine:init', () => {
                         this.loginError = 'Gagal memverifikasi akun. Periksa hak akses Firestore.';
                         await window.posDb.logout();
                     }
+                });
+            },
+
+            // Polling ringan menunggu window.posDb tersedia (lihat catatan di atas init()).
+            _waitForPosDb(timeoutMs) {
+                return new Promise((resolve) => {
+                    if (window.posDb) { resolve(true); return; }
+                    const start = Date.now();
+                    const interval = setInterval(() => {
+                        if (window.posDb) {
+                            clearInterval(interval);
+                            resolve(true);
+                        } else if (Date.now() - start > timeoutMs) {
+                            clearInterval(interval);
+                            resolve(false);
+                        }
+                    }, 50);
                 });
             }
         }

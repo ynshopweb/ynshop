@@ -69,7 +69,7 @@ function createAuthState() {
                 return;
             }
             if (!window.posDb?.auth) {
-                this.loginError = 'Koneksi Firebase belum siap. Coba lagi sebentar.';
+                this.loginError = 'Koneksi Firebase belum siap. Tunggu beberapa detik lalu coba lagi, atau muat ulang halaman.';
                 return;
             }
 
