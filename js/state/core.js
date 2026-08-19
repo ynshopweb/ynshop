@@ -9,6 +9,9 @@ function createCoreState() {
         // Navigasi & Tampilan Umum
         currentTab: 'dashboard',
         darkMode: false,
+        // State toggle sidebar di layar kecil (mobile) — sidebar desktop
+        // tidak terpengaruh, cuma dipakai di bawah breakpoint lg.
+        mobileSidebarOpen: false,
 
         // Notifikasi Toast
         toast: { show: false, message: '', type: 'info' },
